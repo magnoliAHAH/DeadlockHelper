@@ -10,7 +10,7 @@ import (
 
 func Update() {
 	reader := bufio.NewReader(os.Stdin)
-	fmt.Print("Введите директорию, где находится Steam (например, E:/SteamLibrary/steamapps/common/Deadlock/game/citadel): ")
+	fmt.Print("Введите путь до корневой директории Deadlock (например, E:/SteamLibrary/steamapps/common/Deadlock/game/citadel): ")
 	inputDir, _ := reader.ReadString('\n')
 	inputDir = strings.TrimSpace(inputDir)
 
