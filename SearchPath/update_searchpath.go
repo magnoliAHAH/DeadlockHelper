@@ -5,14 +5,10 @@ import (
 	"fmt"
 	"os"
 	"regexp"
-	"strings"
 )
 
-func Update() {
+func Update(inputDir string) {
 	reader := bufio.NewReader(os.Stdin)
-	fmt.Print("Введите путь до корневой директории Deadlock (например, E:/SteamLibrary/steamapps/common/Deadlock/game/citadel): ")
-	inputDir, _ := reader.ReadString('\n')
-	inputDir = strings.TrimSpace(inputDir)
 
 	defer func() {
 		fmt.Println("Нажмите Enter для выхода...")
