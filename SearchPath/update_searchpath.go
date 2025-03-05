@@ -15,7 +15,7 @@ func Update(inputDir string) {
 		reader.ReadString('\n')
 	}()
 
-	filePath := inputDir + "/gameinfo.gi"
+	filePath := inputDir + "/game/citadel/gameinfo.gi"
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		fmt.Println("Файл gameinfo.gi не найден в указанной директории.")
 
