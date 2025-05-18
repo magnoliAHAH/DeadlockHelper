@@ -23,7 +23,7 @@ type ApiResponse struct {
 
 // FetchMods возвращает первые 10 модов для игры с ID=20948
 func FetchMods() ([]Mod, error) {
-	const urlMods = "https://gamebanana.com/apiv11/Mod/Index?_nPerpage=10&_nPage=1&_aFilters[Generic_Game]=20948"
+	const urlMods = "https://gamebanana.com/apiv11/Mod/Index?_nPerpage=20&_nPage=1&_aFilters[Generic_Game]=20948"
 	resp, err := http.Get(urlMods)
 	if err != nil {
 		return nil, err

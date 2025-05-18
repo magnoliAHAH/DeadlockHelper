@@ -1,10 +1,9 @@
 package main
 
 import (
-	"fmt"
-	"path/filepath"
-
+	extractfile "DeadlockHelper/ExtractFile"
 	gamebanana "DeadlockHelper/Parser"
+	"fmt"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -70,22 +69,41 @@ func downloadMod(mod gamebanana.Mod, dir string, parent fyne.Window) {
 		return
 	}
 
-	// показываем бесконечный прогресс
 	progress := dialog.NewProgressInfinite("Скачивание", fmt.Sprintf("Мод: %s", mod.Name), parent)
 	progress.Show()
 
 	go func() {
 		outPath, err := gamebanana.DownloadModToDir(mod.ID, dir)
 
-		// прячем прогресс
-		progress.Hide()
-
 		if err != nil {
-			// показать ошибку в главном потоке
-			dialog.ShowError(fmt.Errorf("не удалось скачать: %w", err), parent)
+			// Показать ошибку через main-горуутину (канал)
+			showErrorOnMain(parent, progress, fmt.Errorf("не удалось скачать: %w", err))
 			return
 		}
 
-		dialog.ShowInformation("Готово", fmt.Sprintf("Сохранено: %s", filepath.Base(outPath)), parent)
+		err = extractfile.ExtractAndInstallVPK(outPath, dir)
+		if err != nil {
+			showErrorOnMain(parent, progress, fmt.Errorf("не удалось установить мод: %w", err))
+			return
+		}
+
+		showInfoOnMain(parent, progress, fmt.Sprintf("Мод %s установлен", mod.Name))
+	}()
+}
+
+// Функция для показа ошибки из горутины
+func showErrorOnMain(parent fyne.Window, progress dialog.Dialog, err error) {
+	go func() {
+		// Хак: ждем 1 тик, потом показываем
+		progress.Hide()
+		dialog.ShowError(err, parent)
+	}()
+}
+
+// Функция для показа информации
+func showInfoOnMain(parent fyne.Window, progress dialog.Dialog, msg string) {
+	go func() {
+		progress.Hide()
+		dialog.ShowInformation("Готово", msg, parent)
 	}()
 }
