@@ -22,31 +22,25 @@ func main() {
 	a := app.New()
 	w := a.NewWindow("Deadlock Helper")
 	w.Resize(fyne.NewSize(600, 400))
-
+	iconRes, err := fyne.LoadResourceFromPath("DeadlockHelper_icon.ico")
+	if err != nil {
+		fmt.Println("Ошибка загрузки иконки:", err)
+	} else {
+		a.SetIcon(iconRes)
+	}
 	rootInput := widget.NewEntry()
 	rootInput.SetPlaceHolder("Введите путь до папки Deadlock")
 
 	loadBtn := widget.NewButton("Загрузить моды", func() {
-		// 1. Создаём бесконечный прогресс-бар
 		progressBar := widget.NewProgressBarInfinite()
-
-		// 2. Упаковываем его в кастомный диалог без кнопок и показываем
-		loadingDialog := dialog.NewCustomWithoutButtons(
-			"Загрузка модов", progressBar, w,
-		)
+		loadingDialog := dialog.NewCustomWithoutButtons("Загрузка модов", progressBar, w)
 		loadingDialog.Show()
 
-		// 3. Запускаем загрузку в фоне
 		go func() {
 			mods, err := gamebanana.FetchMods(1)
-
-			// 4. Безопасно обновляем UI из горутины
 			fyne.Do(func() {
-				// останавливаем анимацию и скрываем диалог
 				progressBar.Stop()
 				loadingDialog.Hide()
-
-				// обрабатываем результат
 				if err != nil {
 					dialog.ShowError(err, w)
 					return
@@ -65,11 +59,72 @@ func main() {
 		dialog.ShowInformation("Готово", "Файл gameinfo.gi обновлён", w)
 	})
 
+	installedBtn := widget.NewButton("Установленные моды", func() {
+		showInstalledModsWindow(a, w, rootInput.Text)
+	})
+
 	w.SetContent(container.NewVBox(
 		rootInput,
-		container.NewHBox(loadBtn, updateBtn),
+		container.NewHBox(loadBtn, updateBtn, installedBtn),
 	))
+
 	w.ShowAndRun()
+}
+
+func showInstalledModsWindow(a fyne.App, parent fyne.Window, dir string) {
+	if dir == "" {
+		dialog.ShowError(fmt.Errorf("укажите путь до папки Deadlock"), parent)
+		return
+	}
+
+	mods, err := installlog.LoadInstalledMods(dir)
+	if err != nil {
+		dialog.ShowError(fmt.Errorf("не удалось загрузить установленные моды: %w", err), parent)
+		return
+	}
+
+	window := a.NewWindow("Установленные моды")
+	window.Resize(fyne.NewSize(800, 600))
+
+	grid := container.NewGridWithColumns(3)
+	for _, mod := range mods {
+		modCopy := mod
+		var img fyne.CanvasObject = widget.NewLabel("Нет изображения")
+		if mod.ImageURL != "" {
+			if uri, err := url.Parse(mod.ImageURL); err == nil {
+				image := canvas.NewImageFromURI(storage.NewURI(uri.String()))
+				image.FillMode = canvas.ImageFillContain
+				image.SetMinSize(fyne.NewSize(150, 150))
+				img = image
+			}
+		}
+
+		card := container.NewVBox(
+			img,
+			widget.NewLabel(mod.Name),
+			widget.NewButton("Удалить", func() {
+				confirm := dialog.NewConfirm("Удалить мод", "Вы уверены?", func(confirmed bool) {
+					if !confirmed {
+						return
+					}
+					err := installlog.DeleteInstalledMod(modCopy.ID, dir)
+					if err != nil {
+						dialog.ShowError(fmt.Errorf("ошибка при удалении: %w", err), window)
+						return
+					}
+					window.Close()
+					showInstalledModsWindow(a, parent, dir)
+				}, window)
+				confirm.Show()
+			}),
+		)
+
+		grid.Add(container.NewBorder(nil, nil, nil, nil, card))
+	}
+
+	scroll := container.NewVScroll(grid)
+	window.SetContent(scroll)
+	window.Show()
 }
 
 func showModsWindow(a fyne.App, parent fyne.Window, initialMods []gamebanana.Mod, saveDir string) {
@@ -83,20 +138,14 @@ func showModsWindow(a fyne.App, parent fyne.Window, initialMods []gamebanana.Mod
 	scroll := container.NewVScroll(grid)
 
 	loadMoreBtn := widget.NewButton("Загрузить ещё", func() {
-		// Создаем бесконечный индикатор прогресса
 		progressBar := widget.NewProgressBarInfinite()
 		progressBar.Start()
-
-		// Создаем пользовательский диалог без кнопок
 		customDialog := dialog.NewCustomWithoutButtons("Загрузка", progressBar, modsWindow)
 		customDialog.Show()
 
-		// Запускаем длительную операцию в отдельной горутине
 		go func() {
 			currentPage++
 			newMods, err := gamebanana.FetchMods(currentPage)
-
-			// Обновляем интерфейс в главном потоке
 			fyne.Do(func() {
 				progressBar.Stop()
 				customDialog.Hide()
@@ -119,7 +168,6 @@ func showModsWindow(a fyne.App, parent fyne.Window, initialMods []gamebanana.Mod
 func addModsToGrid(mods []gamebanana.Mod, items *[]fyne.CanvasObject, grid *fyne.Container, saveDir string, parent fyne.Window) {
 	for _, mod := range mods {
 		modCopy := mod
-
 		var img fyne.CanvasObject = widget.NewLabel("Загрузка изображения...")
 		if mod.ImageURL() != "" {
 			if uri, err := url.Parse(mod.ImageURL()); err == nil {
@@ -137,9 +185,8 @@ func addModsToGrid(mods []gamebanana.Mod, items *[]fyne.CanvasObject, grid *fyne
 				downloadMod(modCopy, saveDir, parent)
 			}),
 		)
-		cardContainer := container.NewBorder(nil, nil, nil, nil, card)
-		*items = append(*items, cardContainer)
-		grid.Add(cardContainer)
+		*items = append(*items, card)
+		grid.Add(container.NewBorder(nil, nil, nil, nil, card))
 	}
 }
 
@@ -171,12 +218,11 @@ func downloadMod(mod gamebanana.Mod, dir string, parent fyne.Window) {
 			return
 		}
 
-		// ✅ Сохраняем информацию об установленном моде
 		_ = installlog.SaveInstalledMod(installlog.InstalledMod{
 			ID:        mod.ID,
 			Name:      mod.Name,
 			ImageURL:  mod.ImageURL(),
-			Path:      modPath, // путь до скачанного архива (или измените на финальный путь, если нужно)
+			Path:      modPath,
 			Installed: time.Now(),
 		}, dir)
 
