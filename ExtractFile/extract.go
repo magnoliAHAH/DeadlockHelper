@@ -9,10 +9,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/bodgit/sevenzip"
 	"github.com/nwaples/rardecode"
 )
 
-// ExtractAndInstallVPK распаковывает ZIP или RAR, находит .vpk и устанавливает его в папку addons
+// ExtractAndInstallVPK распаковывает ZIP, RAR или 7z, находит .vpk и устанавливает его в папку addons
 func ExtractAndInstallVPK(archivePath string, rootPath string) (string, error) {
 	fmt.Println("Starting extraction for:", archivePath)
 
@@ -34,6 +35,9 @@ func ExtractAndInstallVPK(archivePath string, rootPath string) (string, error) {
 	case ".rar":
 		fmt.Println("Detected RAR archive")
 		err = extractRAR(archivePath, tmpDir)
+	case ".7z":
+		fmt.Println("Detected 7z archive")
+		err = extract7z(archivePath, tmpDir)
 	default:
 		err = fmt.Errorf("unsupported archive format: %s", ext)
 	}
@@ -172,6 +176,51 @@ func extractRAR(rarPath, dstDir string) error {
 		}
 
 		outFile.Close()
+	}
+	return nil
+}
+
+// extract7z распаковывает 7z архив в указанную папку
+func extract7z(archivePath, dstDir string) error {
+	r, err := sevenzip.OpenReader(archivePath)
+	if err != nil {
+		return fmt.Errorf("failed to open 7z: %w", err)
+	}
+	defer r.Close()
+
+	for _, f := range r.File {
+		outPath := filepath.Join(dstDir, f.Name)
+
+		if f.FileInfo().IsDir() {
+			if err := os.MkdirAll(outPath, f.FileInfo().Mode()); err != nil {
+				return fmt.Errorf("failed to create directory %s: %w", outPath, err)
+			}
+			continue
+		}
+
+		if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
+			return fmt.Errorf("failed to create directory for file %s: %w", outPath, err)
+		}
+
+		inFile, err := f.Open()
+		if err != nil {
+			return fmt.Errorf("failed to open file %s in archive: %w", f.Name, err)
+		}
+
+		dstFile, err := os.OpenFile(outPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, f.FileInfo().Mode())
+		if err != nil {
+			inFile.Close()
+			return fmt.Errorf("failed to create file %s: %w", outPath, err)
+		}
+
+		if _, err := io.Copy(dstFile, inFile); err != nil {
+			inFile.Close()
+			dstFile.Close()
+			return fmt.Errorf("failed to copy file %s: %w", outPath, err)
+		}
+
+		inFile.Close()
+		dstFile.Close()
 	}
 	return nil
 }
