@@ -3,6 +3,7 @@ package main
 import (
 	extractfile "DeadlockHelper/ExtractFile"
 	gamebanana "DeadlockHelper/Parser"
+	updater "DeadlockHelper/SearchPath"
 	"fmt"
 
 	"fyne.io/fyne/v2"
@@ -28,8 +29,20 @@ func main() {
 		}
 		showModsWindow(a, w, mods, rootInput.Text)
 	})
+	updateBtn := widget.NewButton("Обновить путь", func() {
+		err := updater.Update(rootInput.Text)
+		if err != nil {
+			dialog.ShowError(err, w)
+			return
+		}
+		dialog.ShowInformation("Готово", "Файл gameinfo.gi обновлён", w)
+	})
 
 	w.SetContent(container.NewVBox(rootInput, loadBtn))
+	w.SetContent(container.NewVBox(
+		rootInput,
+		container.NewHBox(loadBtn, updateBtn),
+	))
 	w.ShowAndRun()
 }
 
@@ -61,7 +74,6 @@ func showModsWindow(a fyne.App, parent fyne.Window, mods []gamebanana.Mod, saveD
 	modsWindow.Show()
 }
 
-// downloadMod запускает загрузку в горутине и показывает диалоги Fyne
 // downloadMod запускает загрузку в горутине и показывает диалоги Fyne
 func downloadMod(mod gamebanana.Mod, dir string, parent fyne.Window) {
 	if dir == "" {
