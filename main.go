@@ -4,12 +4,17 @@ import (
 	extractfile "DeadlockHelper/ExtractFile"
 	gamebanana "DeadlockHelper/Parser"
 	updater "DeadlockHelper/SearchPath"
+	installlog "DeadlockHelper/installedmods"
 	"fmt"
+	"net/url"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -22,13 +27,35 @@ func main() {
 	rootInput.SetPlaceHolder("Введите путь до папки Deadlock")
 
 	loadBtn := widget.NewButton("Загрузить моды", func() {
-		mods, err := gamebanana.FetchMods()
-		if err != nil {
-			dialog.ShowError(err, w)
-			return
-		}
-		showModsWindow(a, w, mods, rootInput.Text)
+		// 1. Создаём бесконечный прогресс-бар
+		progressBar := widget.NewProgressBarInfinite()
+
+		// 2. Упаковываем его в кастомный диалог без кнопок и показываем
+		loadingDialog := dialog.NewCustomWithoutButtons(
+			"Загрузка модов", progressBar, w,
+		)
+		loadingDialog.Show()
+
+		// 3. Запускаем загрузку в фоне
+		go func() {
+			mods, err := gamebanana.FetchMods(1)
+
+			// 4. Безопасно обновляем UI из горутины
+			fyne.Do(func() {
+				// останавливаем анимацию и скрываем диалог
+				progressBar.Stop()
+				loadingDialog.Hide()
+
+				// обрабатываем результат
+				if err != nil {
+					dialog.ShowError(err, w)
+					return
+				}
+				showModsWindow(a, w, mods, rootInput.Text)
+			})
+		}()
 	})
+
 	updateBtn := widget.NewButton("Обновить путь", func() {
 		err := updater.Update(rootInput.Text)
 		if err != nil {
@@ -38,7 +65,6 @@ func main() {
 		dialog.ShowInformation("Готово", "Файл gameinfo.gi обновлён", w)
 	})
 
-	w.SetContent(container.NewVBox(rootInput, loadBtn))
 	w.SetContent(container.NewVBox(
 		rootInput,
 		container.NewHBox(loadBtn, updateBtn),
@@ -46,35 +72,77 @@ func main() {
 	w.ShowAndRun()
 }
 
-// Открывает новое окно со списком модов
-func showModsWindow(a fyne.App, parent fyne.Window, mods []gamebanana.Mod, saveDir string) {
+func showModsWindow(a fyne.App, parent fyne.Window, initialMods []gamebanana.Mod, saveDir string) {
 	modsWindow := a.NewWindow("Доступные моды")
-	modsWindow.Resize(fyne.NewSize(500, 400))
+	modsWindow.Resize(fyne.NewSize(800, 600))
 
-	list := widget.NewList(
-		func() int { return len(mods) },
-		func() fyne.CanvasObject {
-			return container.NewHBox(
-				widget.NewLabel("…"),
-				widget.NewButton("Скачать", nil),
-			)
-		},
-		func(i widget.ListItemID, o fyne.CanvasObject) {
-			mod := mods[i]
-			cont := o.(*fyne.Container)
-			cont.Objects[0].(*widget.Label).SetText(mod.Name)
-			btn := cont.Objects[1].(*widget.Button)
-			btn.OnTapped = func() {
-				downloadMod(mod, saveDir, modsWindow)
-			}
-		},
-	)
+	currentPage := 1
+	var items []fyne.CanvasObject
 
-	modsWindow.SetContent(list)
+	grid := container.NewGridWithColumns(3)
+	scroll := container.NewVScroll(grid)
+
+	loadMoreBtn := widget.NewButton("Загрузить ещё", func() {
+		// Создаем бесконечный индикатор прогресса
+		progressBar := widget.NewProgressBarInfinite()
+		progressBar.Start()
+
+		// Создаем пользовательский диалог без кнопок
+		customDialog := dialog.NewCustomWithoutButtons("Загрузка", progressBar, modsWindow)
+		customDialog.Show()
+
+		// Запускаем длительную операцию в отдельной горутине
+		go func() {
+			currentPage++
+			newMods, err := gamebanana.FetchMods(currentPage)
+
+			// Обновляем интерфейс в главном потоке
+			fyne.Do(func() {
+				progressBar.Stop()
+				customDialog.Hide()
+				if err != nil {
+					dialog.ShowError(err, modsWindow)
+				} else {
+					addModsToGrid(newMods, &items, grid, saveDir, modsWindow)
+				}
+			})
+		}()
+	})
+
+	addModsToGrid(initialMods, &items, grid, saveDir, modsWindow)
+
+	content := container.NewBorder(nil, loadMoreBtn, nil, nil, scroll)
+	modsWindow.SetContent(content)
 	modsWindow.Show()
 }
 
-// downloadMod запускает загрузку в горутине и показывает диалоги Fyne
+func addModsToGrid(mods []gamebanana.Mod, items *[]fyne.CanvasObject, grid *fyne.Container, saveDir string, parent fyne.Window) {
+	for _, mod := range mods {
+		modCopy := mod
+
+		var img fyne.CanvasObject = widget.NewLabel("Загрузка изображения...")
+		if mod.ImageURL() != "" {
+			if uri, err := url.Parse(mod.ImageURL()); err == nil {
+				image := canvas.NewImageFromURI(storage.NewURI(uri.String()))
+				image.FillMode = canvas.ImageFillContain
+				image.SetMinSize(fyne.NewSize(150, 150))
+				img = image
+			}
+		}
+
+		card := container.NewVBox(
+			img,
+			widget.NewLabel(mod.Name),
+			widget.NewButton("Скачать", func() {
+				downloadMod(modCopy, saveDir, parent)
+			}),
+		)
+		cardContainer := container.NewBorder(nil, nil, nil, nil, card)
+		*items = append(*items, cardContainer)
+		grid.Add(cardContainer)
+	}
+}
+
 func downloadMod(mod gamebanana.Mod, dir string, parent fyne.Window) {
 	if dir == "" {
 		dialog.ShowError(fmt.Errorf("укажите путь до папки Deadlock"), parent)
@@ -86,36 +154,35 @@ func downloadMod(mod gamebanana.Mod, dir string, parent fyne.Window) {
 
 	go func() {
 		outPath, err := gamebanana.DownloadModToDir(mod.ID, dir)
-
 		if err != nil {
-			// Показать ошибку через main-горуутину (канал)
-			showErrorOnMain(parent, progress, fmt.Errorf("не удалось скачать: %w", err))
+			fyne.Do(func() {
+				progress.Hide()
+				dialog.ShowError(fmt.Errorf("не удалось скачать: %w", err), parent)
+			})
 			return
 		}
 
-		err = extractfile.ExtractAndInstallVPK(outPath, dir)
+		modPath, err := extractfile.ExtractAndInstallVPK(outPath, dir)
 		if err != nil {
-			showErrorOnMain(parent, progress, fmt.Errorf("не удалось установить мод: %w", err))
+			fyne.Do(func() {
+				progress.Hide()
+				dialog.ShowError(fmt.Errorf("не удалось установить мод: %w", err), parent)
+			})
 			return
 		}
 
-		showInfoOnMain(parent, progress, fmt.Sprintf("Мод %s установлен", mod.Name))
-	}()
-}
+		// ✅ Сохраняем информацию об установленном моде
+		_ = installlog.SaveInstalledMod(installlog.InstalledMod{
+			ID:        mod.ID,
+			Name:      mod.Name,
+			ImageURL:  mod.ImageURL(),
+			Path:      modPath, // путь до скачанного архива (или измените на финальный путь, если нужно)
+			Installed: time.Now(),
+		}, dir)
 
-// Функция для показа ошибки из горутины
-func showErrorOnMain(parent fyne.Window, progress dialog.Dialog, err error) {
-	go func() {
-		// Хак: ждем 1 тик, потом показываем
-		progress.Hide()
-		dialog.ShowError(err, parent)
-	}()
-}
-
-// Функция для показа информации
-func showInfoOnMain(parent fyne.Window, progress dialog.Dialog, msg string) {
-	go func() {
-		progress.Hide()
-		dialog.ShowInformation("Готово", msg, parent)
+		fyne.Do(func() {
+			progress.Hide()
+			dialog.ShowInformation("Успех", fmt.Sprintf("Мод %s установлен успешно", mod.Name), parent)
+		})
 	}()
 }
