@@ -185,72 +185,97 @@ func showModsWindow(a fyne.App, parent fyne.Window, initial []gamebanana.Mod, sa
 	modsWindow := a.NewWindow("Доступные моды")
 	modsWindow.Resize(fyne.NewSize(800, 600))
 
-	// Поле поиска и кнопка
 	searchInput := widget.NewEntry()
 	searchInput.SetPlaceHolder("Поиск модов...")
-	searchInput.Resize(fyne.NewSize(400, 40))
-	var searchBtn *widget.Button
 
-	// Функция рендера списка
-	render := func(mods []gamebanana.Mod) {
-		grid := container.NewGridWithColumns(3)
+	var currentPage = 1
+	var allMods []gamebanana.Mod = initial
+	grid := container.NewGridWithColumns(3)
+
+	// Отрисовка модов
+	addModsToGrid := func(mods []gamebanana.Mod) {
 		for _, m := range mods {
-			mod := m
+			mod := m // копия
 			var imgObj fyne.CanvasObject = widget.NewLabel("Нет изображения")
 			if urlStr := mod.ImageURL(); urlStr != "" {
-				iuri, _ := url.Parse(urlStr)
-				image := canvas.NewImageFromURI(storage.NewURI(iuri.String()))
-				image.FillMode = canvas.ImageFillContain
-				image.SetMinSize(fyne.NewSize(150, 150))
-				imgObj = image
+				if uri, err := url.Parse(urlStr); err == nil {
+					image := canvas.NewImageFromURI(storage.NewURI(uri.String()))
+					image.FillMode = canvas.ImageFillContain
+					image.SetMinSize(fyne.NewSize(150, 150))
+					imgObj = image
+				}
 			}
-
 			card := container.NewVBox(
 				imgObj,
 				widget.NewLabel(mod.Name),
-				widget.NewButton("Скачать", func() { downloadMod(mod, saveDir, modsWindow) }),
+				widget.NewButton("Скачать", func() {
+					downloadMod(mod, saveDir, modsWindow)
+				}),
 			)
-			grid.Add(container.NewBorder(nil, nil, nil, nil, card))
+			grid.Add(card)
 		}
-		scroll := container.NewVScroll(grid)
-		// Обновляем содержимое окна
-		modsWindow.SetContent(container.NewBorder(
-			container.NewBorder(nil, nil, nil, searchBtn, searchInput), // строка поиска растянута
-			nil, nil, nil,
-			scroll,
-		))
 	}
 
-	// Инициализация кнопки поиска с прогрессом
-	searchBtn = widget.NewButton("Найти", func() {
-		query := searchInput.Text
+	addModsToGrid(initial)
 
-		progressBar := widget.NewProgressBarInfinite()
-		loadingDialog := dialog.NewCustomWithoutButtons("Поиск модов", progressBar, modsWindow)
+	scroll := container.NewVScroll(grid)
+
+	// Кнопка "Загрузить ещё"
+	loadMoreBtn := widget.NewButton("Загрузить ещё", func() {
+		currentPage++
+		progress := widget.NewProgressBarInfinite()
+		loadingDialog := dialog.NewCustomWithoutButtons("Загрузка", progress, modsWindow)
 		loadingDialog.Show()
 
 		go func() {
-			var mods []gamebanana.Mod
-			var err error
-			if query == "" {
-				mods, err = gamebanana.FetchMods(1)
-			} else {
-				mods, err = searchMods(query, 20948)
-			}
-
+			newMods, err := gamebanana.FetchMods(currentPage)
 			fyne.Do(func() {
 				loadingDialog.Hide()
 				if err != nil {
 					dialog.ShowError(err, modsWindow)
 					return
 				}
-				render(mods)
+				if len(newMods) == 0 {
+					dialog.ShowInformation("Конец", "Больше модов не найдено", modsWindow)
+					return
+				}
+				allMods = append(allMods, newMods...)
+				addModsToGrid(newMods)
+				scroll.Refresh()
 			})
 		}()
 	})
 
-	// Первый рендер
-	render(initial)
+	searchBtn := widget.NewButton("Найти", func() {
+		query := searchInput.Text
+		if query == "" {
+			return
+		}
+		progress := widget.NewProgressBarInfinite()
+		loadingDialog := dialog.NewCustomWithoutButtons("Поиск", progress, modsWindow)
+		loadingDialog.Show()
+
+		go func() {
+			mods, err := searchMods(query, 20948)
+			fyne.Do(func() {
+				loadingDialog.Hide()
+				if err != nil {
+					dialog.ShowError(err, modsWindow)
+					return
+				}
+				// Очистка
+				grid.Objects = nil
+				allMods = mods
+				addModsToGrid(mods)
+				scroll.Refresh()
+			})
+		}()
+	})
+
+	topBar := container.NewBorder(nil, nil, nil, searchBtn, searchInput)
+	content := container.NewBorder(topBar, loadMoreBtn, nil, nil, scroll)
+
+	modsWindow.SetContent(content)
 	modsWindow.Show()
 }
 
