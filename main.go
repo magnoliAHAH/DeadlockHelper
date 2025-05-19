@@ -1,6 +1,7 @@
 package main
 
 import (
+	config "DeadlockHelper/Config"
 	extractfile "DeadlockHelper/ExtractFile"
 	gamebanana "DeadlockHelper/Parser"
 	updater "DeadlockHelper/SearchPath"
@@ -28,8 +29,37 @@ func main() {
 	} else {
 		a.SetIcon(iconRes)
 	}
+
+	// Загрузка конфига
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		dialog.ShowError(fmt.Errorf("ошибка загрузки конфига: %w", err), w)
+	}
+
 	rootInput := widget.NewEntry()
 	rootInput.SetPlaceHolder("Введите путь до папки Deadlock")
+
+	statusLabel := widget.NewLabel("")
+	if cfg.DeadlockPath == "" {
+		statusLabel.SetText("Конфиг не найден, введите директорию Deadlock и Сохранить")
+	} else {
+		rootInput.SetText(cfg.DeadlockPath)
+	}
+
+	savePathBtn := widget.NewButton("Сохранить путь", func() {
+		path := rootInput.Text
+		if path == "" {
+			dialog.ShowError(fmt.Errorf("путь не может быть пустым"), w)
+			return
+		}
+		err := config.SaveConfig(config.Config{DeadlockPath: path})
+		if err != nil {
+			dialog.ShowError(fmt.Errorf("ошибка сохранения конфига: %w", err), w)
+			return
+		}
+		statusLabel.SetText("") // убираем сообщение
+		dialog.ShowInformation("Успех", "Путь успешно сохранён", w)
+	})
 
 	loadBtn := widget.NewButton("Загрузить моды", func() {
 		progressBar := widget.NewProgressBarInfinite()
@@ -64,7 +94,9 @@ func main() {
 	})
 
 	w.SetContent(container.NewVBox(
+		statusLabel,
 		rootInput,
+		savePathBtn,
 		container.NewHBox(loadBtn, updateBtn, installedBtn),
 	))
 
