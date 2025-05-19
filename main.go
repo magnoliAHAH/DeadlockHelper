@@ -6,7 +6,9 @@ import (
 	gamebanana "DeadlockHelper/Parser"
 	updater "DeadlockHelper/SearchPath"
 	installlog "DeadlockHelper/installedmods"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"time"
 
@@ -19,14 +21,34 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
+func searchMods(query string, gameID int) ([]gamebanana.Mod, error) {
+	api := fmt.Sprintf(
+		"https://gamebanana.com/apiv11/Util/Search/Results?_sSearchString=%s&_idGameRow=%d",
+		url.QueryEscape(query), gameID)
+	resp, err := http.Get(api)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("search request failed: %s", resp.Status)
+	}
+	var out struct {
+		ARecords []gamebanana.Mod `json:"_aRecords"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return out.ARecords, nil
+}
+
 func main() {
 	a := app.New()
 	w := a.NewWindow("Deadlock Helper")
 	w.Resize(fyne.NewSize(600, 400))
 	iconRes, err := fyne.LoadResourceFromPath("DeadlockHelper_icon.ico")
-	if err != nil {
-		fmt.Println("Ошибка загрузки иконки:", err)
-	} else {
+	if err == nil {
 		a.SetIcon(iconRes)
 	}
 
@@ -57,7 +79,7 @@ func main() {
 			dialog.ShowError(fmt.Errorf("ошибка сохранения конфига: %w", err), w)
 			return
 		}
-		statusLabel.SetText("") // убираем сообщение
+		statusLabel.SetText("")
 		dialog.ShowInformation("Успех", "Путь успешно сохранён", w)
 	})
 
@@ -159,41 +181,76 @@ func showInstalledModsWindow(a fyne.App, parent fyne.Window, dir string) {
 	window.Show()
 }
 
-func showModsWindow(a fyne.App, parent fyne.Window, initialMods []gamebanana.Mod, saveDir string) {
+func showModsWindow(a fyne.App, parent fyne.Window, initial []gamebanana.Mod, saveDir string) {
 	modsWindow := a.NewWindow("Доступные моды")
 	modsWindow.Resize(fyne.NewSize(800, 600))
 
-	currentPage := 1
-	var items []fyne.CanvasObject
+	// Поле поиска и кнопка
+	searchInput := widget.NewEntry()
+	searchInput.SetPlaceHolder("Поиск модов...")
+	searchInput.Resize(fyne.NewSize(400, 40))
+	var searchBtn *widget.Button
 
-	grid := container.NewGridWithColumns(3)
-	scroll := container.NewVScroll(grid)
+	// Функция рендера списка
+	render := func(mods []gamebanana.Mod) {
+		grid := container.NewGridWithColumns(3)
+		for _, m := range mods {
+			mod := m
+			var imgObj fyne.CanvasObject = widget.NewLabel("Нет изображения")
+			if urlStr := mod.ImageURL(); urlStr != "" {
+				iuri, _ := url.Parse(urlStr)
+				image := canvas.NewImageFromURI(storage.NewURI(iuri.String()))
+				image.FillMode = canvas.ImageFillContain
+				image.SetMinSize(fyne.NewSize(150, 150))
+				imgObj = image
+			}
 
-	loadMoreBtn := widget.NewButton("Загрузить ещё", func() {
+			card := container.NewVBox(
+				imgObj,
+				widget.NewLabel(mod.Name),
+				widget.NewButton("Скачать", func() { downloadMod(mod, saveDir, modsWindow) }),
+			)
+			grid.Add(container.NewBorder(nil, nil, nil, nil, card))
+		}
+		scroll := container.NewVScroll(grid)
+		// Обновляем содержимое окна
+		modsWindow.SetContent(container.NewBorder(
+			container.NewBorder(nil, nil, nil, searchBtn, searchInput), // строка поиска растянута
+			nil, nil, nil,
+			scroll,
+		))
+	}
+
+	// Инициализация кнопки поиска с прогрессом
+	searchBtn = widget.NewButton("Найти", func() {
+		query := searchInput.Text
+
 		progressBar := widget.NewProgressBarInfinite()
-		progressBar.Start()
-		customDialog := dialog.NewCustomWithoutButtons("Загрузка", progressBar, modsWindow)
-		customDialog.Show()
+		loadingDialog := dialog.NewCustomWithoutButtons("Поиск модов", progressBar, modsWindow)
+		loadingDialog.Show()
 
 		go func() {
-			currentPage++
-			newMods, err := gamebanana.FetchMods(currentPage)
+			var mods []gamebanana.Mod
+			var err error
+			if query == "" {
+				mods, err = gamebanana.FetchMods(1)
+			} else {
+				mods, err = searchMods(query, 20948)
+			}
+
 			fyne.Do(func() {
-				progressBar.Stop()
-				customDialog.Hide()
+				loadingDialog.Hide()
 				if err != nil {
 					dialog.ShowError(err, modsWindow)
-				} else {
-					addModsToGrid(newMods, &items, grid, saveDir, modsWindow)
+					return
 				}
+				render(mods)
 			})
 		}()
 	})
 
-	addModsToGrid(initialMods, &items, grid, saveDir, modsWindow)
-
-	content := container.NewBorder(nil, loadMoreBtn, nil, nil, scroll)
-	modsWindow.SetContent(content)
+	// Первый рендер
+	render(initial)
 	modsWindow.Show()
 }
 
